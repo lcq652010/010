@@ -1,0 +1,30 @@
+2023-04-30 10:00:01 INFO - Application started successfully
+2023-04-30 10:00:02 DEBUG - Initializing database connection
+2023-04-30 10:00:03 INFO - Database connection established
+2023-04-30 10:00:04 DEBUG - Loading configuration from config.properties
+2023-04-30 10:00:05 INFO - Configuration loaded successfully
+2023-04-30 10:00:06 WARN - Memory usage is above 80%
+2023-04-30 10:00:07 DEBUG - Performing garbage collection
+2023-04-30 10:00:08 INFO - Memory usage is now normal
+2023-04-30 10:00:09 INFO - User admin logged in from 192.168.1.100
+2023-04-30 10:00:10 DEBUG - Processing request: GET /api/users
+2023-04-30 10:00:11 INFO - Request processed successfully, returning 25 users
+2023-04-30 10:00:12 DEBUG - Closing database connection
+2023-04-30 10:00:13 INFO - Database connection closed
+2023-04-30 10:00:14 ERROR - Failed to load external module: com.example.ModuleLoader
+2023-04-30 10:00:15 DEBUG - Stack trace: java.lang.ClassNotFoundException: com.example.ModuleLoader
+2023-04-30 10:00:16 WARN - Using fallback implementation instead
+2023-04-30 10:00:17 INFO - Fallback module loaded successfully
+2023-04-30 10:00:18 DEBUG - Initializing cache system
+2023-04-30 10:00:19 INFO - Cache system initialized with 1000 entries capacity
+2023-04-30 10:00:20 DEBUG - Loading cached data from disk
+2023-04-30 10:00:21 INFO - Cached data loaded successfully, 500 entries restored
+2023-04-30 10:00:22 DEBUG - Starting HTTP server on port 8080
+2023-04-30 10:00:23 INFO - HTTP server started successfully
+2023-04-30 10:00:24 DEBUG - Registering request handlers
+2023-04-30 10:00:25 INFO - All request handlers registered successfully
+2023-04-30 10:00:26 DEBUG - Setting up security filters
+2023-04-30 10:00:27 INFO - Security filters configured successfully
+2023-04-30 10:00:28 DEBUG - Starting background tasks scheduler
+2023-04-30 10:00:29 INFO - Background tasks scheduler started
+2023-04-30 10:00:30 INFO - Application is now ready to accept requests
