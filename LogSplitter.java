@@ -105,6 +105,8 @@ class SplitterConfig {
 }
 
 class LogFileSplitter {
+    private static final int BUFFER_SIZE = 8192;
+    
     private final SplitterConfig config;
     private final SplitResult result;
     private final FileConflictHandler conflictHandler;
@@ -245,4 +247,104 @@ class PlainSplitFileWriter implements SplitFileWriter {
 }
 
 class ZipSplitFileWriter implements SplitFileWriter {
-    private final File output
+    private final File outputFile;
+    private final ZipOutputStream zipOutputStream;
+    private final FileConflictHandler conflictHandler;
+    private boolean entryClosed = false;
+    
+    public ZipSplitFileWriter(File outputFile, String entryName, FileConflictHandler conflictHandler) throws IOException {
+        this.outputFile = outputFile;
+        this.conflictHandler = conflictHandler;
+        
+        conflictHandler.checkConflict(outputFile);
+        
+        FileOutputStream fos = new FileOutputStream(outputFile);
+        BufferedOutputStream bos = new BufferedOutputStream(fos);
+        this.zipOutputStream = new ZipOutputStream(bos);
+        
+        ZipEntry entry = new ZipEntry(entryName);
+        zipOutputStream.putNextEntry(entry);
+    }
+    
+    @Override
+    public void write(byte[] buffer, int offset, int length) throws IOException {
+        zipOutputStream.write(buffer, offset, length);
+    }
+    
+    @Override
+    public File getOutputFile() {
+        return outputFile;
+    }
+    
+    @Override
+    public void close() throws IOException {
+        if (!entryClosed) {
+            zipOutputStream.closeEntry();
+            entryClosed = true;
+        }
+        zipOutputStream.flush();
+        zipOutputStream.close();
+    }
+}
+
+class FileConflictHandler {
+    
+    public void checkConflict(File file) throws IOException {
+        if (file.exists()) {
+            System.out.println("Warning: File already exists and will be overwritten: " + file.getAbsolutePath());
+        }
+    }
+}
+
+class SplitResult {
+    private long originalFileSize;
+    private int splitCount;
+    private long compressedTotalSize;
+    private double savedPercentage;
+    
+    public SplitResult() {
+        this.originalFileSize = 0;
+        this.splitCount = 0;
+        this.compressedTotalSize = 0;
+        this.savedPercentage = 0.0;
+    }
+    
+    public void setOriginalFileSize(long originalFileSize) {
+        this.originalFileSize = originalFileSize;
+    }
+    
+    public void incrementSplitCount() {
+        this.splitCount++;
+    }
+    
+    public void addToCompressedTotalSize(long size) {
+        this.compressedTotalSize += size;
+    }
+    
+    public void calculateSavedPercentage() {
+        if (originalFileSize > 0) {
+            long savedSize = originalFileSize - compressedTotalSize;
+            this.savedPercentage = (savedSize * 100.0) / originalFileSize;
+        }
+    }
+    
+    public long getOriginalFileSize() { return originalFileSize; }
+    public int getSplitCount() { return splitCount; }
+    public long getCompressedTotalSize() { return compressedTotalSize; }
+    public double getSavedPercentage() { return savedPercentage; }
+}
+
+class FileUtils {
+    
+    public static String formatFileSize(long sizeBytes) {
+        if (sizeBytes < 1024) {
+            return sizeBytes + " B";
+        } else if (sizeBytes < 1024 * 1024) {
+            return String.format("%.2f KB", sizeBytes / 1024.0);
+        } else if (sizeBytes < 1024 * 1024 * 1024) {
+            return String.format("%.2f MB", sizeBytes / (1024.0 * 1024.0));
+        } else {
+            return String.format("%.2f GB", sizeBytes / (1024.0 * 1024.0 * 1024.0));
+        }
+    }
+}
