@@ -5,8 +5,6 @@ import java.util.zip.*;
 public class LogSplitter {
     
     private static final String USAGE = "Usage: java LogSplitter <log_file_path> <split_size_MB> [compress(true/false)] [output_directory]";
-    private static final int BUFFER_SIZE = 8192;
-    private static final String DEFAULT_ENCODING = "UTF-8";
     
     public static void main(String[] args) {
         try {
@@ -123,9 +121,16 @@ class LogFileSplitter {
         File logFile = config.getLogFile();
         result.setOriginalFileSize(logFile.length());
         
+        if (logFile.length() == 0) {
+            System.out.println("Warning: Log file is empty, no split files will be created");
+            return result;
+        }
+        
         String fileName = logFile.getName();
         String baseName = fileName.contains(".") ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
         String extension = fileName.contains(".") ? fileName.substring(fileName.lastIndexOf('.')) : "";
+        
+        SplitFileWriter currentWriter = null;
         
         try (FileInputStream fis = new FileInputStream(logFile);
              BufferedInputStream bis = new BufferedInputStream(fis)) {
@@ -135,50 +140,75 @@ class LogFileSplitter {
             long currentFileSize = 0;
             int fileIndex = 1;
             
-            SplitFileWriter currentWriter = null;
-            
-            while ((bytesRead = bis.read(buffer)) != -1) {
-                if (currentWriter == null || currentFileSize + bytesRead > config.getSplitSizeBytes()) {
-                    if (currentWriter != null) {
-                        currentWriter.close();
-                        File splitFile = currentWriter.getOutputFile();
+            try {
+                while ((bytesRead = bis.read(buffer)) != -1) {
+                    int offset = 0;
+                    int remaining = bytesRead;
+                    
+                    while (remaining > 0) {
+                        long spaceLeft = config.getSplitSizeBytes() - currentFileSize;
                         
-                        result.incrementSplitCount();
-                        result.addToCompressedTotalSize(splitFile.length());
+                        if (spaceLeft <= 0 || currentWriter == null) {
+                            if (currentWriter != null) {
+                                closeWriterAndRecordStats(currentWriter);
+                            }
+                            
+                            currentFileSize = 0;
+                            String splitFileName = baseName + "_" + fileIndex + extension;
+                            File outputFile = getOutputFile(splitFileName);
+                            
+                            if (config.isCompress()) {
+                                currentWriter = SplitFileWriterFactory.createZipWriter(outputFile, baseName + "_" + fileIndex + extension, conflictHandler);
+                            } else {
+                                currentWriter = SplitFileWriterFactory.createPlainWriter(outputFile, conflictHandler);
+                            }
+                            
+                            fileIndex++;
+                            spaceLeft = config.getSplitSizeBytes();
+                        }
                         
-                        System.out.println("Completed: " + splitFile.getName() + " (" + FileUtils.formatFileSize(splitFile.length()) + ")");
+                        int bytesToWrite = (int) Math.min(remaining, spaceLeft);
+                        currentWriter.write(buffer, offset, bytesToWrite);
+                        currentFileSize += bytesToWrite;
+                        offset += bytesToWrite;
+                        remaining -= bytesToWrite;
                     }
-                    
-                    currentFileSize = 0;
-                    String splitFileName = baseName + "_" + fileIndex + extension;
-                    File outputFile = getOutputFile(splitFileName);
-                    
-                    if (config.isCompress()) {
-                        currentWriter = new ZipSplitFileWriter(outputFile, baseName + "_" + fileIndex + extension, conflictHandler);
-                    } else {
-                        currentWriter = new PlainSplitFileWriter(outputFile, conflictHandler);
-                    }
-                    
-                    fileIndex++;
                 }
-                
-                currentWriter.write(buffer, 0, bytesRead);
-                currentFileSize += bytesRead;
-            }
-            
-            if (currentWriter != null) {
-                currentWriter.close();
-                File splitFile = currentWriter.getOutputFile();
-                
-                result.incrementSplitCount();
-                result.addToCompressedTotalSize(splitFile.length());
-                
-                System.out.println("Completed: " + splitFile.getName() + " (" + FileUtils.formatFileSize(splitFile.length()) + ")");
+            } finally {
+                if (currentWriter != null) {
+                    closeWriterAndRecordStats(currentWriter);
+                    currentWriter = null;
+                }
             }
         }
         
         result.calculateSavedPercentage();
         return result;
+    }
+    
+    private void closeWriterAndRecordStats(SplitFileWriter writer) throws IOException {
+        File splitFile = writer.getOutputFile();
+        long fileSizeBeforeClose = splitFile.length();
+        
+        try {
+            writer.close();
+        } catch (IOException e) {
+            System.err.println("Warning: Error closing writer: " + e.getMessage());
+            throw e;
+        }
+        
+        long fileSize = splitFile.length();
+        if (fileSize == 0) {
+            if (splitFile.delete()) {
+                System.out.println("Deleted empty file: " + splitFile.getName());
+            }
+            return;
+        }
+        
+        result.incrementSplitCount();
+        result.addToCompressedTotalSize(fileSize);
+        
+        System.out.println("Completed: " + splitFile.getName() + " (" + FileUtils.formatFileSize(fileSize) + ")");
     }
     
     private void prepareOutputDirectory() throws IOException {
@@ -210,6 +240,59 @@ class LogFileSplitter {
     }
 }
 
+class SplitFileWriterFactory {
+    
+    public static SplitFileWriter createPlainWriter(File outputFile, FileConflictHandler conflictHandler) throws IOException {
+        conflictHandler.checkConflict(outputFile);
+        
+        FileOutputStream fos = null;
+        BufferedOutputStream bos = null;
+        
+        try {
+            fos = new FileOutputStream(outputFile);
+            bos = new BufferedOutputStream(fos);
+            return new PlainSplitFileWriter(outputFile, bos);
+        } catch (IOException e) {
+            closeQuietly(bos);
+            closeQuietly(fos);
+            throw e;
+        }
+    }
+    
+    public static SplitFileWriter createZipWriter(File outputFile, String entryName, FileConflictHandler conflictHandler) throws IOException {
+        conflictHandler.checkConflict(outputFile);
+        
+        FileOutputStream fos = null;
+        BufferedOutputStream bos = null;
+        ZipOutputStream zos = null;
+        
+        try {
+            fos = new FileOutputStream(outputFile);
+            bos = new BufferedOutputStream(fos);
+            zos = new ZipOutputStream(bos);
+            
+            ZipEntry entry = new ZipEntry(entryName);
+            zos.putNextEntry(entry);
+            
+            return new ZipSplitFileWriter(outputFile, zos);
+        } catch (IOException e) {
+            closeQuietly(zos);
+            closeQuietly(bos);
+            closeQuietly(fos);
+            throw e;
+        }
+    }
+    
+    private static void closeQuietly(Closeable closeable) {
+        if (closeable != null) {
+            try {
+                closeable.close();
+            } catch (IOException ignored) {
+            }
+        }
+    }
+}
+
 interface SplitFileWriter extends Closeable {
     void write(byte[] buffer, int offset, int length) throws IOException;
     File getOutputFile();
@@ -218,19 +301,18 @@ interface SplitFileWriter extends Closeable {
 class PlainSplitFileWriter implements SplitFileWriter {
     private final File outputFile;
     private final BufferedOutputStream outputStream;
-    private final FileConflictHandler conflictHandler;
+    private boolean closed = false;
     
-    public PlainSplitFileWriter(File outputFile, FileConflictHandler conflictHandler) throws IOException {
+    public PlainSplitFileWriter(File outputFile, BufferedOutputStream outputStream) {
         this.outputFile = outputFile;
-        this.conflictHandler = conflictHandler;
-        
-        conflictHandler.checkConflict(outputFile);
-        
-        this.outputStream = new BufferedOutputStream(new FileOutputStream(outputFile));
+        this.outputStream = outputStream;
     }
     
     @Override
     public void write(byte[] buffer, int offset, int length) throws IOException {
+        if (closed) {
+            throw new IOException("Writer is already closed");
+        }
         outputStream.write(buffer, offset, length);
     }
     
@@ -241,33 +323,33 @@ class PlainSplitFileWriter implements SplitFileWriter {
     
     @Override
     public void close() throws IOException {
-        outputStream.flush();
-        outputStream.close();
+        if (!closed) {
+            closed = true;
+            try {
+                outputStream.flush();
+            } finally {
+                outputStream.close();
+            }
+        }
     }
 }
 
 class ZipSplitFileWriter implements SplitFileWriter {
     private final File outputFile;
     private final ZipOutputStream zipOutputStream;
-    private final FileConflictHandler conflictHandler;
+    private boolean closed = false;
     private boolean entryClosed = false;
     
-    public ZipSplitFileWriter(File outputFile, String entryName, FileConflictHandler conflictHandler) throws IOException {
+    public ZipSplitFileWriter(File outputFile, ZipOutputStream zipOutputStream) {
         this.outputFile = outputFile;
-        this.conflictHandler = conflictHandler;
-        
-        conflictHandler.checkConflict(outputFile);
-        
-        FileOutputStream fos = new FileOutputStream(outputFile);
-        BufferedOutputStream bos = new BufferedOutputStream(fos);
-        this.zipOutputStream = new ZipOutputStream(bos);
-        
-        ZipEntry entry = new ZipEntry(entryName);
-        zipOutputStream.putNextEntry(entry);
+        this.zipOutputStream = zipOutputStream;
     }
     
     @Override
     public void write(byte[] buffer, int offset, int length) throws IOException {
+        if (closed) {
+            throw new IOException("Writer is already closed");
+        }
         zipOutputStream.write(buffer, offset, length);
     }
     
@@ -278,12 +360,18 @@ class ZipSplitFileWriter implements SplitFileWriter {
     
     @Override
     public void close() throws IOException {
-        if (!entryClosed) {
-            zipOutputStream.closeEntry();
-            entryClosed = true;
+        if (!closed) {
+            closed = true;
+            try {
+                if (!entryClosed) {
+                    zipOutputStream.closeEntry();
+                    entryClosed = true;
+                }
+                zipOutputStream.flush();
+            } finally {
+                zipOutputStream.close();
+            }
         }
-        zipOutputStream.flush();
-        zipOutputStream.close();
     }
 }
 
